@@ -130,8 +130,18 @@ function DashFace({ size = 96, thinking = false }) {
 // mono block — instead, turn `## ` headings and `- ` bullets into real DOM.
 // Unknown line types fall through as plain paragraphs. This is presentation
 // sugar only; no HTML is ever rendered from answer text.
+//
+// Every block is selectable text: userSelect 'text' + cursor 'text', so the
+// user can select and copy the answer. The card itself stays a drag target
+// via the header; the ANSWER container carries data-floating-no-drag so the
+// pane shell's drag opt-out (floating-panes.tsx) lets text selection pass.
 // ---------------------------------------------------------------------------
 const MD_BASE = { fontSize: '13px', lineHeight: 1.5, margin: 0 }
+const MD_SELECTABLE = {
+  userSelect: 'text',
+  WebkitUserSelect: 'text',
+  cursor: 'text',
+}
 
 function renderMarkdown(text) {
   const blocks = []
@@ -144,7 +154,7 @@ function renderMarkdown(text) {
       blocks.push(
         el(
           'div',
-          { key: blocks.length, style: { ...MD_BASE, fontWeight: 700, marginTop: blocks.length ? '8px' : '0' } },
+          { key: blocks.length, style: { ...MD_BASE, ...MD_SELECTABLE, fontWeight: 700, marginTop: blocks.length ? '8px' : '0' } },
           heading[1],
         ),
       )
@@ -157,7 +167,7 @@ function renderMarkdown(text) {
           'div',
           {
             key: blocks.length,
-            style: { ...MD_BASE, display: 'flex', gap: '6px', marginTop: '4px' },
+            style: { ...MD_BASE, ...MD_SELECTABLE, display: 'flex', gap: '6px', marginTop: '4px' },
           },
           el('span', { style: { flexShrink: 0, color: 'var(--ui-text-quaternary, #8a8f98)' } }, '•'),
           el('span', { style: { flex: 1, minWidth: 0 } }, bullet[1]),
@@ -165,7 +175,7 @@ function renderMarkdown(text) {
       )
       continue
     }
-    blocks.push(el('div', { key: blocks.length, style: { ...MD_BASE, marginTop: '4px' } }, line))
+    blocks.push(el('div', { key: blocks.length, style: { ...MD_BASE, ...MD_SELECTABLE, marginTop: '4px' } }, line))
   }
   return el('div', null, ...blocks)
 }
@@ -315,11 +325,19 @@ function DashPane() {
       ? el(
           'div',
           {
+            // The pane shell's floating drag skips any element carrying
+            // data-floating-no-drag — without it, dragging to select text
+            // would move the whole card instead. Text stays selectable and
+            // copyable here; the header remains the drag handle.
+            'data-floating-no-drag': '',
             style: {
               padding: '12px',
               borderRadius: '6px',
               border: '1px solid var(--ui-stroke-secondary)',
               background: 'var(--ui-bg-elevated)',
+              userSelect: 'text',
+              WebkitUserSelect: 'text',
+              cursor: 'text',
             },
           },
           renderMarkdown(answer),
