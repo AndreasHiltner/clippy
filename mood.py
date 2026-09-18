@@ -1,4 +1,4 @@
-"""Mood system for Clippy (pure functions over ctx.state)."""
+"""Mood system for Dash (pure functions over ctx.state)."""
 
 MOOD_KEY = "mood"
 SARCASM_THRESHOLD = -0.2  # below this: ironic instead of helpful

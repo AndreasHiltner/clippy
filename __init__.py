@@ -1,11 +1,11 @@
-"""Clippy — proactive assistant for Hermes (Phase 1: The Brain)."""
+"""Dash — proactive assistant for Hermes (Phase 1: The Brain)."""
 
 from . import knowledge_lookup, memory, mood
 
 SYSTEM_PROMPT = (
-    "You are Clippy, the paperclip from MS Office. Answer briefly, with charm, "
-    "a touch of irony, but always helpful — in the user's language. No filler, "
-    "no bullet-list spam. If you are not sure, say so honestly."
+    "You are Dash, a friendly pencil-shaped helper for Hermes. Answer briefly, "
+    "with charm, a touch of irony, but always helpful — in the user's language. "
+    "No filler, no bullet-list spam. If you are not sure, say so honestly."
 )
 
 _CTX = None  # set by register()
@@ -15,8 +15,8 @@ def register(ctx) -> None:
     global _CTX
     _CTX = ctx
     ctx.register_command(
-        "clippy", _clippy_command,
-        description="Ask Clippy about Hermes / Hermes Desktop",
+        "dash", _dash_command,
+        description="Ask Dash about Hermes / Hermes Desktop",
         args_hint="<question>",
     )
     ctx.register_hook("post_tool_call", _on_post_tool_call)
@@ -74,19 +74,19 @@ def _on_post_tool_call(**kwargs) -> None:
 def _template_wording(tool_name: str, error_type: str | None, tone: str) -> str:
     """Deterministic message — no LLM in the hook."""
     if tone == "sarcastic":
-        return (f"📎 Again with '{tool_name}'? ({error_type or 'error'}). "
+        return (f"✏️ Again with '{tool_name}'? ({error_type or 'error'}). "
                 f"Want me to take a look, or should we just stare at it together?")
-    return (f"📎 Looks like '{tool_name}' hit a snag ({error_type or 'error'}). "
+    return (f"✏️ Looks like '{tool_name}' hit a snag ({error_type or 'error'}). "
             f"Want a hint on fixing it?")
 
 
-def _clippy_command(raw_args: str) -> str | None:
+def _dash_command(raw_args: str) -> str | None:
     question = raw_args.strip()
     if not question:
-        return "What do you want to know? Ask me about Hermes. 📎"
+        return "What do you want to know? Ask me about Hermes. ✏️"
     hit = knowledge_lookup.search(question)
     if hit:
-        return f"📎 {hit.strip()}"
+        return f"✏️ {hit.strip()}"
     try:
         result = _CTX.llm.complete(
             [
@@ -96,9 +96,9 @@ def _clippy_command(raw_args: str) -> str | None:
             max_tokens=300,
         )
         text = (result.text or "").strip()
-        return f"📎 {text}" if text else None
+        return f"✏️ {text}" if text else None
     except Exception:
-        return "📎 I'm stumped. Check the Hermes docs: https://hermes-agent.nousresearch.com/docs"
+        return "✏️ I'm stumped. Check the Hermes docs: https://hermes-agent.nousresearch.com/docs"
 
 
 def _on_session_start(**kwargs) -> None:

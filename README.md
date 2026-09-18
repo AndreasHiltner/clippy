@@ -1,24 +1,25 @@
-# Clippy — Hermes Plugin
+# Dash — Hermes Plugin
 
-Clippit (the MS Office paperclip) as a proactive assistant for Hermes.
-Phase 1: the brain (observer + helpdesk). Phase 2 (animated paperclip): later.
+Dash, the pencil helper for Hermes — proactive assistant, original character.
+Phase 1: the brain (observer + helpdesk). Phase 2 (animated pencil): later.
 
-![Clippy](assets/clippy.png)
+![Dash](assets/dash.png)
 
 ## Assets
 
-- `assets/clippy.svg` — source vector (edit this, then re-render PNGs)
-- `assets/clippy.png` / `clippy-512.png` / `clippy-64.png` — rendered PNGs
+- `assets/dash.svg` — source vector (edit this, then re-render PNGs)
+- `assets/dash.png` / `dash-512.png` / `dash-64.png` — rendered PNGs
 
 ## Installation
 
-1. Put the repo at `~/.hermes/plugins/clippy/` (or `git clone` it there).
+1. Put the repo at `~/.hermes/plugins/dash/` (or `git clone` it there).
 2. Restart Hermes. The plugin is auto-discovered.
 
 ## Usage
 
-- `/clippy <question>` — helpdesk for Hermes / Hermes Desktop
-- Proactive: on repeated tool errors, Clippy interjects with a tip.
+- `/dash <question>` — helpdesk for Hermes / Hermes Desktop
+- Desktop: Dash is a floating window — drag it anywhere, click it to ask.
+- Proactive: on repeated tool errors, Dash interjects with a tip.
 
 ## Config (optional)
 
@@ -26,7 +27,7 @@ Phase 1: the brain (observer + helpdesk). Phase 2 (animated paperclip): later.
 # ~/.hermes/config.yaml
 plugins:
   entries:
-    clippy:
+    dash:
       allow_gateway_injection: true   # required for proactive messages in the gateway (Telegram/Discord)
       llm:
         allowed_models: []            # optionally restrict
@@ -35,6 +36,6 @@ plugins:
 ## Behavior
 
 - **Mood:** helpful → ironic on repetition.
-- **Memory:** Clippy remembers reported patterns (survives sessions).
+- **Memory:** Dash remembers reported patterns (survives sessions).
 - **Throttle:** max 5 messages/session, min 60s cooldown.
-- **Fail-open:** Clippy can never block the agent loop.
+- **Fail-open:** Dash can never block the agent loop.

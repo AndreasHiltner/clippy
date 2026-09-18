@@ -1,4 +1,4 @@
-"""Memory + throttle + quota for Clippy (pure functions over ctx.state)."""
+"""Memory + throttle + quota for Dash (pure functions over ctx.state)."""
 
 import time
 
@@ -36,7 +36,7 @@ def should_report(
     cooldown_s: float = DEFAULT_COOLDOWN_S,
     repeat_threshold: int = DEFAULT_REPEAT_THRESHOLD,
 ) -> bool:
-    """True if Clippy may report this pattern right now.
+    """True if Dash may report this pattern right now.
 
     `count` is the 1-indexed seen count (already includes the latest sighting):
     - count == 1 → first sight (helpful), gated by cooldown

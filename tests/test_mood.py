@@ -1,4 +1,4 @@
-from clippy import mood
+from dash import mood
 
 
 def test_get_mood_defaults_to_zero():

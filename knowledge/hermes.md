@@ -4,7 +4,7 @@
 - `/new` — start a new session
 - `/stop` — abort a running turn
 - `/loop` — repeated execution (see below)
-- `/clippy <question>` — this helpdesk
+- `/dash <question>` — this helpdesk
 
 ## Error Patterns
 - **Cron not delivering:** execute_code is blocked in cron — write to /tmp and use terminal instead.

@@ -1,4 +1,4 @@
-"""Deterministic knowledge-base search for the /clippy helpdesk."""
+"""Deterministic knowledge-base search for the /dash helpdesk."""
 
 from pathlib import Path
 

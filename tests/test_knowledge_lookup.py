@@ -1,4 +1,4 @@
-from clippy import knowledge_lookup
+from dash import knowledge_lookup
 
 
 def test_finds_matching_section():

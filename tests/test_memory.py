@@ -1,4 +1,4 @@
-from clippy import memory
+from dash import memory
 
 
 def _seen(state, key, n):

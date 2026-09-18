@@ -1,1 +1,1 @@
-Bringe den Clippy- Assistent von MS Office nach Hermes
+Bringe einen proaktiven Assistenten nach Hermes: Dash, der Bleistift.

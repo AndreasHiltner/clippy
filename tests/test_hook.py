@@ -1,4 +1,4 @@
-import clippy as clippy_mod
+import dash as dash_mod
 
 
 class FakeState:
@@ -49,27 +49,27 @@ def _post_payload(tool_name, status="error", error_type="exit_code"):
 
 
 def test_new_pattern_reports_immediately():
-    clippy_mod._CTX = FakeCtx()
-    clippy_mod._on_post_tool_call(**_post_payload("terminal"))
-    assert len(clippy_mod._CTX.injected) == 1  # first sighting → inject
+    dash_mod._CTX = FakeCtx()
+    dash_mod._on_post_tool_call(**_post_payload("terminal"))
+    assert len(dash_mod._CTX.injected) == 1  # first sighting → inject
 
 
 def test_repeat_below_threshold_is_suppressed():
-    clippy_mod._CTX = FakeCtx()
-    clippy_mod._on_post_tool_call(**_post_payload("terminal"))  # report 1 (count→1)
-    clippy_mod._on_post_tool_call(**_post_payload("terminal"))  # count 2 (< N=3)
-    assert len(clippy_mod._CTX.injected) == 1  # second suppressed
+    dash_mod._CTX = FakeCtx()
+    dash_mod._on_post_tool_call(**_post_payload("terminal"))  # report 1 (count→1)
+    dash_mod._on_post_tool_call(**_post_payload("terminal"))  # count 2 (< N=3)
+    assert len(dash_mod._CTX.injected) == 1  # second suppressed
 
 
 def test_escalation_point_reports_again():
-    clippy_mod._CTX = FakeCtx()
+    dash_mod._CTX = FakeCtx()
     for _ in range(4):  # injects on call 1 (new) and call 4 (count hits 3)
-        clippy_mod._on_post_tool_call(**_post_payload("terminal"))
-    assert len(clippy_mod._CTX.injected) == 2  # new + escalation point only
+        dash_mod._on_post_tool_call(**_post_payload("terminal"))
+    assert len(dash_mod._CTX.injected) == 2  # new + escalation point only
 
 
 def test_ok_status_never_reports():
-    clippy_mod._CTX = FakeCtx()
-    clippy_mod._on_post_tool_call(**_post_payload("terminal", status="ok"))
-    assert clippy_mod._CTX.injected == []
-    assert clippy_mod._CTX.state.data.get("session_quota", 0) == 0
+    dash_mod._CTX = FakeCtx()
+    dash_mod._on_post_tool_call(**_post_payload("terminal", status="ok"))
+    assert dash_mod._CTX.injected == []
+    assert dash_mod._CTX.state.data.get("session_quota", 0) == 0

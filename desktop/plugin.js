@@ -1,8 +1,8 @@
-// Hermes Clippy — desktop half (thin ESM, presentation-only).
+// Hermes Dash — desktop half (thin ESM, presentation-only).
 //
 // Unified agent+desktop package:
-//   agent half   ~/.hermes/plugins/clippy/__init__.py  (registers /clippy + observer hooks)
-//   desktop half ~/.hermes/plugins/clippy/desktop/plugin.js  (this file)
+//   agent half   ~/.hermes/plugins/dash/__init__.py  (registers /dash + observer hooks)
+//   desktop half ~/.hermes/plugins/dash/desktop/plugin.js  (this file)
 //
 // The pane is a FLOATING helpdesk card. The core pane shell renders
 // `placement: 'floating'` as a fixed, draggable window — the header is the
@@ -10,9 +10,9 @@
 // per pane id. No drag code lives here.
 //
 // Two views inside the card:
-//   avatar — the Clippy face; a single click opens the editor
+//   avatar — the Dash pencil; a single click opens the editor
 //   editor — question input + answer, sent to the ALREADY-running Python
-//            brain via gateway RPC (command.dispatch → plugin command 'clippy')
+//            brain via gateway RPC (command.dispatch → plugin command 'dash')
 //
 // Session-independent: the Python brain answers the question directly and the
 // answer renders inside this card. No chat session is created, no tab opens —
@@ -26,16 +26,12 @@ import { useEffect, useRef, useState } from 'react'
 import { host } from '@hermes/plugin-sdk'
 
 // ---------------------------------------------------------------------------
-// Clippy face — inline SVG twin of assets/clippy.svg, themed via CSS vars so
-// no asset-resolution is needed in the blob-loaded runtime context.
+// Dash pencil — original character, inline SVG twin of assets/dash.svg.
+// Themed via CSS vars: yellow body = accent, pink eraser = red token, graphite
+// + face lines = text color. Flat stylized pencil, NOT any existing assistant
+// mascot.
 // ---------------------------------------------------------------------------
-const WIRE =
-  'M 78 34 C 78 20, 92 14, 106 14 C 126 14, 140 26, 140 44 ' +
-  'L 140 196 C 140 218, 156 234, 178 234 C 200 234, 214 220, 214 202 ' +
-  'L 214 78 C 214 62, 202 52, 188 52 C 174 52, 162 62, 162 76 ' +
-  'L 162 178 C 162 190, 168 198, 178 198'
-
-function ClippyFace({ size = 96 }) {
+function DashFace({ size = 96 }) {
   return jsx(
     'svg',
     {
@@ -43,31 +39,70 @@ function ClippyFace({ size = 96 }) {
       width: size,
       height: size,
       role: 'img',
-      'aria-label': 'Clippy the paperclip',
+      'aria-label': 'Dash the pencil',
       style: { display: 'block', flexShrink: 0 },
     },
+    // eraser
     jsx('path', {
-      d: WIRE,
+      d: 'M 96 26 h 64 a 10 10 0 0 1 10 10 v 26 h -84 v -26 a 10 10 0 0 1 10 -10 Z',
+      fill: 'var(--ui-red, #e5484d)',
+    }),
+    // ferrule
+    jsx('path', {
+      d: 'M 96 56 h 64 v 8 h -64 Z',
+      fill: 'var(--ui-text-quaternary, #8a8f98)',
+    }),
+    jsx('path', {
+      d: 'M 96 72 h 64 v 18 h -64 Z',
+      fill: 'var(--ui-text-secondary)',
+    }),
+    // body
+    jsx('path', {
+      d: 'M 96 90 h 64 v 110 h -64 Z',
+      fill: 'var(--ui-accent)',
+    }),
+    // body shading stripe
+    jsx('path', {
+      d: 'M 96 90 h 8 v 110 h -8 Z',
+      fill: 'var(--ui-accent)',
+      opacity: 0.55,
+    }),
+    // wood cone
+    jsx('path', {
+      d: 'M 96 200 h 64 l -14 32 h -36 Z',
+      fill: '#e8c39e',
+    }),
+    // graphite tip
+    jsx('path', {
+      d: 'M 118 232 h 20 l -4 20 h -12 Z',
+      fill: 'var(--ui-text-primary)',
+    }),
+    // eyes
+    jsx('circle', { cx: 112, cy: 122, r: 6, fill: 'var(--ui-text-primary)' }),
+    jsx('circle', { cx: 144, cy: 122, r: 6, fill: 'var(--ui-text-primary)' }),
+    // eyebrows
+    jsx('path', {
+      d: 'M 103 106 Q 112 100 121 106',
       fill: 'none',
       stroke: 'var(--ui-text-primary)',
-      strokeWidth: 24,
+      strokeWidth: 4,
       strokeLinecap: 'round',
     }),
     jsx('path', {
-      d: WIRE,
+      d: 'M 135 106 Q 144 100 153 106',
       fill: 'none',
-      stroke: 'var(--ui-bg-elevated)',
-      strokeWidth: 16,
+      stroke: 'var(--ui-text-primary)',
+      strokeWidth: 4,
       strokeLinecap: 'round',
     }),
-    jsx('ellipse', { cx: 112, cy: 60, rx: 12, ry: 16, fill: '#ffffff' }),
-    jsx('ellipse', { cx: 158, cy: 60, rx: 12, ry: 16, fill: '#ffffff' }),
-    jsx('circle', { cx: 115, cy: 62, r: 5.5, fill: '#20202a' }),
-    jsx('circle', { cx: 161, cy: 62, r: 5.5, fill: '#20202a' }),
-    jsx('circle', { cx: 117.5, cy: 59, r: 2, fill: '#ffffff' }),
-    jsx('circle', { cx: 163.5, cy: 59, r: 2, fill: '#ffffff' }),
-    jsx('path', { d: 'M 100 40 Q 112 34 124 40', fill: 'none', stroke: 'var(--ui-text-secondary)', strokeWidth: 4, strokeLinecap: 'round' }),
-    jsx('path', { d: 'M 146 40 Q 158 34 170 40', fill: 'none', stroke: 'var(--ui-text-secondary)', strokeWidth: 4, strokeLinecap: 'round' }),
+    // smile
+    jsx('path', {
+      d: 'M 118 148 Q 128 156 138 148',
+      fill: 'none',
+      stroke: 'var(--ui-text-primary)',
+      strokeWidth: 4,
+      strokeLinecap: 'round',
+    }),
   )
 }
 
@@ -76,19 +111,19 @@ function ClippyFace({ size = 96 }) {
 // No session_id means no chat session, no tab — the gateway routes plugin
 // commands straight to the Python handler and returns a plain string.
 // ---------------------------------------------------------------------------
-async function askClippy(question) {
+async function askDash(question) {
   const res = await host.request('command.dispatch', {
-    name: 'clippy',
+    name: 'dash',
     arg: question,
     session_id: '',
   })
   if (res && typeof res.output === 'string' && res.output) {
     return res.output
   }
-  return '📎 Hmm. No answer came back — is the Hermes gateway running?'
+  return '✏️ Hmm. No answer came back — is the Hermes gateway running?'
 }
 
-function ClippyPane() {
+function DashPane() {
   const [view, setView] = useState('avatar')
   const [question, setQuestion] = useState('')
   const [answer, setAnswer] = useState('')
@@ -106,9 +141,9 @@ function ClippyPane() {
     if (!q || busy) return
     setBusy(true)
     try {
-      setAnswer(await askClippy(q))
+      setAnswer(await askDash(q))
     } catch {
-      setAnswer('📎 I can\u2019t reach the gateway right now. Hermes is running, right?')
+      setAnswer('✏️ I can\u2019t reach the gateway right now. Hermes is running, right?')
     } finally {
       setBusy(false)
     }
@@ -121,7 +156,7 @@ function ClippyPane() {
     color: 'var(--ui-text-primary)',
   }
 
-  // Avatar view — the whole card is the Clippy face. One click opens the editor.
+  // Avatar view — the whole card is the Dash pencil. One click opens the editor.
   if (view === 'avatar') {
     return jsxs(
       'div',
@@ -135,13 +170,13 @@ function ClippyPane() {
           cursor: 'pointer',
         },
         onClick: () => setView('editor'),
-        title: 'Click to ask Clippy',
+        title: 'Click to ask Dash',
       },
-      ClippyFace({ size: 120 }),
+      DashFace({ size: 120 }),
       jsx(
         'div',
         { style: { textAlign: 'center', fontSize: '13px', color: 'var(--ui-text-secondary)' } },
-        'It looks like you might have a question. Click me to ask!',
+        'Need a hand? Click me to ask!',
       ),
     )
   }
@@ -149,13 +184,13 @@ function ClippyPane() {
   // Editor view — question + answer, still inside the floating card.
   return jsxs('div', { style: { ...base, gap: '10px', padding: '10px 12px', overflow: 'auto' } }, ...[
     jsxs('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } }, ...[
-      ClippyFace({ size: 40 }),
-      jsx('div', { style: { flex: 1, fontSize: '13px', fontWeight: 600 } }, 'Ask Clippy'),
+      DashFace({ size: 40 }),
+      jsx('div', { style: { flex: 1, fontSize: '13px', fontWeight: 600 } }, 'Ask Dash'),
       jsx(
         'button',
         {
           onClick: () => setView('avatar'),
-          title: 'Back to Clippy',
+          title: 'Back to Dash',
           style: {
             border: 'none',
             background: 'transparent',
@@ -226,21 +261,21 @@ function ClippyPane() {
 }
 
 export default {
-  id: 'clippy',
-  name: 'Clippy',
-  description: 'The paperclip helpdesk for Hermes — a floating window that answers questions about commands, errors, and the Desktop app.',
+  id: 'dash',
+  name: 'Dash',
+  description: 'The pencil helper for Hermes — a floating window that answers questions about commands, errors, and the Desktop app.',
   register(ctx) {
     ctx.register({
       id: 'pane-float',
       area: 'panes',
-      title: 'Clippy',
+      title: 'Dash',
       data: {
         placement: 'floating',
         anchor: 'bottom-right',
         width: '300px',
         height: '360px',
       },
-      render: () => jsx(ClippyPane, {}),
+      render: () => jsx(DashPane, {}),
     })
   },
 }
