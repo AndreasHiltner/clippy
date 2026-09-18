@@ -4,15 +4,25 @@
 //   agent half   ~/.hermes/plugins/clippy/__init__.py  (registers /clippy + observer hooks)
 //   desktop half ~/.hermes/plugins/clippy/desktop/plugin.js  (this file)
 //
-// This pane is a helpdesk UI only: questions are answered by the ALREADY-running
-// Python brain through the gateway RPC (`command.dispatch` → plugin command
-// 'clippy'). No second brain, no LLM, no tokens in the renderer.
+// The pane is a FLOATING helpdesk card. The core pane shell renders
+// `placement: 'floating'` as a fixed, draggable window — the header is the
+// drag handle, the corner is a resize grip, and position + size are persisted
+// per pane id. No drag code lives here.
+//
+// Two views inside the card:
+//   avatar — the Clippy face; a single click opens the editor
+//   editor — question input + answer, sent to the ALREADY-running Python
+//            brain via gateway RPC (command.dispatch → plugin command 'clippy')
+//
+// Session-independent: the Python brain answers the question directly and the
+// answer renders inside this card. No chat session is created, no tab opens —
+// command.dispatch routes plugin commands without a session.
 //
 // Plain ESM, loaded uncompiled: jsx()/jsxs() calls only, imports limited to
 // @hermes/plugin-sdk, react, react/jsx-runtime (the runtime loader's allowlist).
 
 import { jsx, jsxs } from 'react/jsx-runtime'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { host } from '@hermes/plugin-sdk'
 
 // ---------------------------------------------------------------------------
@@ -34,7 +44,7 @@ function ClippyFace({ size = 96 }) {
       height: size,
       role: 'img',
       'aria-label': 'Clippy the paperclip',
-      style: { display: 'block', margin: '0 auto 14px' },
+      style: { display: 'block', flexShrink: 0 },
     },
     jsx('path', {
       d: WIRE,
@@ -63,6 +73,8 @@ function ClippyFace({ size = 96 }) {
 
 // ---------------------------------------------------------------------------
 // Helpdesk flow: question → gateway RPC → the Python brain answers.
+// No session_id means no chat session, no tab — the gateway routes plugin
+// commands straight to the Python handler and returns a plain string.
 // ---------------------------------------------------------------------------
 async function askClippy(question) {
   const res = await host.request('command.dispatch', {
@@ -73,13 +85,21 @@ async function askClippy(question) {
   if (res && typeof res.output === 'string' && res.output) {
     return res.output
   }
-  return '📎 Hmm. No answer came back — try again?'
+  return '📎 Hmm. No answer came back — is the Hermes gateway running?'
 }
 
 function ClippyPane() {
+  const [view, setView] = useState('avatar')
   const [question, setQuestion] = useState('')
   const [answer, setAnswer] = useState('')
   const [busy, setBusy] = useState(false)
+  const inputRef = useRef(null)
+
+  useEffect(() => {
+    if (view === 'editor') {
+      inputRef.current && inputRef.current.focus()
+    }
+  }, [view])
 
   const submit = async () => {
     const q = question.trim()
@@ -88,31 +108,69 @@ function ClippyPane() {
     try {
       setAnswer(await askClippy(q))
     } catch {
-      setAnswer('📎 I need a live Hermes session to answer. Open a chat first, then ask me again.')
+      setAnswer('📎 I can\u2019t reach the gateway right now. Hermes is running, right?')
     } finally {
       setBusy(false)
     }
   }
 
-  const style = {
-    padding: '20px',
+  const base = {
     display: 'flex',
     flexDirection: 'column',
-    gap: '12px',
     height: '100%',
-    overflow: 'auto',
     color: 'var(--ui-text-primary)',
   }
 
-  return jsxs('div', { style }, ...[
-    ClippyFace({ size: 96 }),
-    jsx(
+  // Avatar view — the whole card is the Clippy face. One click opens the editor.
+  if (view === 'avatar') {
+    return jsxs(
       'div',
-      { style: { textAlign: 'center', fontSize: '13px', color: 'var(--ui-text-secondary)' } },
-      'It looks like you have a question about Hermes. Ask me anything — commands, errors, the Desktop app.',
-    ),
+      {
+        style: {
+          ...base,
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: '10px',
+          padding: '16px',
+          cursor: 'pointer',
+        },
+        onClick: () => setView('editor'),
+        title: 'Click to ask Clippy',
+      },
+      ClippyFace({ size: 120 }),
+      jsx(
+        'div',
+        { style: { textAlign: 'center', fontSize: '13px', color: 'var(--ui-text-secondary)' } },
+        'It looks like you might have a question. Click me to ask!',
+      ),
+    )
+  }
+
+  // Editor view — question + answer, still inside the floating card.
+  return jsxs('div', { style: { ...base, gap: '10px', padding: '10px 12px', overflow: 'auto' } }, ...[
+    jsxs('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } }, ...[
+      ClippyFace({ size: 40 }),
+      jsx('div', { style: { flex: 1, fontSize: '13px', fontWeight: 600 } }, 'Ask Clippy'),
+      jsx(
+        'button',
+        {
+          onClick: () => setView('avatar'),
+          title: 'Back to Clippy',
+          style: {
+            border: 'none',
+            background: 'transparent',
+            color: 'var(--ui-text-secondary)',
+            fontSize: '16px',
+            cursor: 'pointer',
+            padding: '0 4px',
+          },
+        },
+        '\u2039',
+      ),
+    ]),
     jsxs('div', { style: { display: 'flex', gap: '8px' } }, ...[
       jsx('input', {
+        ref: inputRef,
         value: question,
         placeholder: 'e.g. gateway won\u2019t start',
         onChange: e => setQuestion(e.target.value),
@@ -121,6 +179,7 @@ function ClippyPane() {
         },
         style: {
           flex: 1,
+          minWidth: 0,
           padding: '8px 10px',
           borderRadius: '6px',
           border: '1px solid var(--ui-stroke-secondary)',
@@ -144,7 +203,7 @@ function ClippyPane() {
             fontWeight: 600,
           },
         },
-        busy ? '…' : 'Ask',
+        busy ? '\u2026' : 'Ask',
       ),
     ]),
     answer
@@ -169,13 +228,18 @@ function ClippyPane() {
 export default {
   id: 'clippy',
   name: 'Clippy',
-  description: 'The paperclip helpdesk for Hermes — ask about commands, errors, and the Desktop app.',
+  description: 'The paperclip helpdesk for Hermes — a floating window that answers questions about commands, errors, and the Desktop app.',
   register(ctx) {
     ctx.register({
-      id: 'pane',
+      id: 'pane-float',
       area: 'panes',
       title: 'Clippy',
-      data: { placement: 'main' },
+      data: {
+        placement: 'floating',
+        anchor: 'bottom-right',
+        width: '300px',
+        height: '360px',
+      },
       render: () => jsx(ClippyPane, {}),
     })
   },
