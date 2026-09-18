@@ -4,18 +4,27 @@
 
 **Goal:** Clippy as a Hermes plugin — proactive error observer with a mood system + `/clippy` helpdesk.
 
-**Architecture:** One plugin package `~/.hermes/plugins/clippy/` with `register(ctx)`. The `post_tool_call` hook classifies tool errors deterministically (no LLM in the agent loop); when a report-worthy pattern fires, LLM wording is outsourced asynchronously via `ctx.spawn_task` and injected with `ctx.inject_message`. Mood + memory + throttle are pure functions over `ctx.state`.
+**Architecture:** One plugin package `~/.hermes/plugins/clippy/` with `register(ctx)`. The `post_tool_call` hook classifies tool errors deterministically and delivers **template-based wording synchronously** via `ctx.inject_message` — no LLM in the agent loop, ever. The `/clippy` command answers from the knowledge base first, then falls back to a **synchronous** `ctx.llm.complete()` call. Mood + memory + throttle are pure functions over `ctx.state`.
 
 **Tech Stack:** Python 3 (stdlib + `pytest` only), Hermes Plugin API (`hermes_cli.plugins.PluginContext`, `hermes_cli.plugins_state.PluginState`, `agent.plugin_llm.PluginLlm`).
 
-**Verified API (against source, NOT guessed):**
-- `register(ctx)` — `ctx` is `PluginContext`
-- `ctx.register_command(name, handler, description="", args_hint="", argument_mode=None)` — handler `fn(raw_args: str) -> str | None` (sync or async)
-- `ctx.register_hook(hook_name, callback)` — callback receives **kwargs; `post_tool_call` provides `tool_name`, `args`, `status`, `error_type`, `error_message`, `result`, `duration_ms`, `session_id`, `task_id`, `tool_call_id`, `turn_id`, `api_request_id`, `telemetry_schema_version`
+### Verified API (against source, NOT guessed)
+
+Two corrections found during source verification supersede the v1/v2 assumptions:
+
+**Correction 1 — handlers get NO `ctx` injected.** Dispatch is `callback(**payload)` (hooks) and `plugin_handler(raw_args)` (commands). `ctx` is never passed as an argument. **Fix:** capture `ctx` in a module-level `_CTX` global set inside `register()`.
+
+**Correction 2 — `ctx.spawn_task()` would crash in `post_tool_call`.** That hook runs on a daemon worker thread (`_HOOK_TIMEOUT_BOUNDED_HOOKS`) with no event loop; `spawn_task` calls `asyncio.get_running_loop()` → `RuntimeError`. **Fix:** no async offload. Template wording + synchronous `ctx.inject_message` (thread-safe queue put).
+
+Verified facts:
+
+- `register(ctx)` — `ctx` is `PluginContext`; handlers must capture `ctx` themselves (no injection)
+- `ctx.register_command(name, handler, description="", args_hint="", argument_mode=None)` — handler `fn(raw_args: str) -> str | None` (sync or async); **called as `handler(user_args)` — one positional arg, no ctx**
+- `ctx.register_hook(hook_name, callback)` — callback called as `callback(**payload)`; **`post_tool_call` provides `tool_name`, `status`, `error_type`, `error_message`, `result`, `duration_ms`, `session_id`, `task_id`, `tool_call_id`, `turn_id`, `api_request_id`, `telemetry_schema_version`**; no `ctx`
 - `ctx.state.get(key, default=None)` / `ctx.state.set(key, value)` — PluginState, atomic, quota-bounded
-- `ctx.llm.complete(messages)` / `await ctx.llm.acomplete(messages)` → `.text` (host-owned, fail-closed)
-- `ctx.inject_message(content, role="user", session_key=None)` → bool (new turn if idle, interrupt if running)
-- `ctx.spawn_task(coro, name=None)` — supervised asyncio task
+- `ctx.llm.complete(messages, *, max_tokens=None, ...)` → `PluginLlmCompleteResult` with `.text` (host-owned, fail-closed); **sync variant, safe to call from the command handler**
+- `ctx.inject_message(content, role="user", session_key=None)` → bool — **synchronous**, thread-safe (puts on the CLI interrupt/pending queue); new turn if idle, interrupt if running
+- `post_tool_call` + `on_session_start` are both in `VALID_HOOKS` and both in `_HOOK_TIMEOUT_BOUNDED_HOOKS` (run on a daemon worker thread, 30s cap, fail-open)
 - `plugin.yaml` manifest + `__init__.py` exposing `register(ctx)`
 
 ### Reporting Semantics (single rule, used consistently everywhere)
@@ -467,12 +476,12 @@ git commit -m "feat: deterministic knowledge-base search"
 **Parallel with:** —
 **Blocks:** Task 9
 
-**Objective:** `register_command("clippy", ...)` — knowledge base first, then LLM fallback.
+**Objective:** `register_command("clippy", ...)` — knowledge base first, then synchronous LLM fallback.
 
 **Files:**
 - Modify: `__init__.py`
 
-**Step 1: Handler implementation**
+**Step 1: Handler implementation (ctx captured via module-level `_CTX`)**
 
 ```python
 """Clippy — proactive assistant for Hermes (Phase 1: The Brain)."""
@@ -485,8 +494,12 @@ SYSTEM_PROMPT = (
     "no bullet-list spam. If you are not sure, say so honestly."
 )
 
+_CTX = None  # set by register(); handlers never receive ctx as an argument
+
 
 def register(ctx) -> None:
+    global _CTX
+    _CTX = ctx
     ctx.register_command(
         "clippy",
         _clippy_command,
@@ -495,7 +508,8 @@ def register(ctx) -> None:
     )
 
 
-async def _clippy_command(raw_args: str) -> str | None:
+def _clippy_command(raw_args: str) -> str | None:
+    """Command handler: called as handler(raw_args) — no ctx injected."""
     question = raw_args.strip()
     if not question:
         return "What do you want to know? Ask me about Hermes. 📎"
@@ -505,49 +519,58 @@ async def _clippy_command(raw_args: str) -> str | None:
     if hit:
         return f"📎 {hit.strip()}"
 
-    # 2. LLM fallback (wired to ctx.llm in Task 7)
-    raise NotImplementedError("LLM fallback wired in Task 7")
+    # 2. Synchronous LLM fallback (host-owned, fail-closed)
+    try:
+        result = _CTX.llm.complete(
+            [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": question},
+            ],
+            max_tokens=300,
+        )
+        text = (result.text or "").strip()
+        return f"📎 {text}" if text else None
+    except Exception:
+        return "📎 I'm stumped. Check the Hermes docs: https://hermes-agent.nousresearch.com/docs"
 ```
 
 **Step 2: Verify — knowledge hit without LLM**
 
 ```bash
 python3 - <<'PY'
-import asyncio, clippy
-async def main():
-    r = await clippy._clippy_command("gateway won't start")
-    print(r[:60])
-asyncio.run(main())
+import clippy
+clippy._CTX = type('C', (), {'llm': type('L', (), {'complete': lambda self, m, **k: (_ for _ in ()).throw(RuntimeError('no LLM in this path'))})()})()
+print(clippy._clippy_command("gateway won't start")[:60])
 PY
-# Expected: "📎 ## Error Patterns..." (knowledge hit, no LLM)
+# Expected: "📎 ## Error Patterns..." (knowledge hit, LLM never called)
 ```
 
 **Step 3: Commit**
 
 ```bash
 git add __init__.py
-git commit -m "feat: /clippy helpdesk command (knowledge first)"
+git commit -m "feat: /clippy helpdesk command (knowledge first, sync LLM fallback)"
 ```
 
 ---
 
-## Task 7: `post_tool_call` Hook — Pattern Detection + Async Wording
+## Task 7: `post_tool_call` Hook — Deterministic Detection + Template Wording
 
 **Depends on:** Task 2, Task 3, Task 6
 **Parallel with:** —
 **Blocks:** Task 8, Task 9
 
-**Objective:** Hook classifies errors deterministically; on a report-worthy pattern, wording runs async via `ctx.spawn_task`.
+**Objective:** Hook classifies errors deterministically; template wording delivered synchronously via `ctx.inject_message`. **No LLM, no `spawn_task`** (the hook runs on a worker thread without an event loop).
 
 **Files:**
 - Modify: `__init__.py`
 
-**Step 1: Refactor — `register` binds `ctx` via closures**
+**Step 1: Full `register` + hook wiring**
 
 ```python
 """Clippy — proactive assistant for Hermes (Phase 1: The Brain)."""
 
-from . import knowledge_lookup, mood, memory
+from . import knowledge_lookup, memory, mood
 
 SYSTEM_PROMPT = (
     "You are Clippy, the paperclip from MS Office. Answer briefly, with charm, "
@@ -555,38 +578,46 @@ SYSTEM_PROMPT = (
     "no bullet-list spam. If you are not sure, say so honestly."
 )
 
+_CTX = None  # set by register()
+
 
 def register(ctx) -> None:
+    global _CTX
+    _CTX = ctx
     ctx.register_command(
-        "clippy", _clippy_command, description="Ask Clippy about Hermes / Hermes Desktop",
+        "clippy", _clippy_command,
+        description="Ask Clippy about Hermes / Hermes Desktop",
         args_hint="<question>",
     )
     ctx.register_hook("post_tool_call", _on_post_tool_call)
     ctx.register_hook("on_session_start", _on_session_start)
 
 
-def _load_state(ctx) -> dict:
-    """Loads state from ctx.state (individual keys) into a plain dict."""
+def _load_state() -> dict:
+    """Loads state from _CTX.state (individual keys) into a plain dict."""
     return {
-        "mood": ctx.state.get("mood", 0.0),
-        "reported": ctx.state.get("reported", {}),
-        "last_message_at": ctx.state.get("last_message_at"),
-        "session_quota": ctx.state.get("session_quota", 0),
+        "mood": _CTX.state.get("mood", 0.0),
+        "reported": _CTX.state.get("reported", {}),
+        "last_message_at": _CTX.state.get("last_message_at"),
+        "session_quota": _CTX.state.get("session_quota", 0),
     }
 
 
-def _save_state(ctx, state: dict) -> None:
+def _save_state(state: dict) -> None:
     for key in ("mood", "reported", "last_message_at", "session_quota"):
         if key in state and state[key] is not None:
-            ctx.state.set(key, state[key])
+            _CTX.state.set(key, state[key])
 
 
 def _pattern_key(tool_name: str, error_type: str | None) -> str:
     return f"tool_error:{tool_name}:{error_type or 'unknown'}"
 
 
-def _on_post_tool_call(ctx, **kwargs) -> None:
-    """Deterministic classification — NO LLM in the agent loop."""
+def _on_post_tool_call(**kwargs) -> None:
+    """Hook callback: called as callback(**payload) — NO ctx, NO spawn_task.
+
+    Deterministic classification + template wording. Synchronous inject_message
+    is thread-safe (queue put). Fail-open."""
     try:
         status = kwargs.get("status")
         if status != "error":
@@ -595,46 +626,29 @@ def _on_post_tool_call(ctx, **kwargs) -> None:
         error_type = kwargs.get("error_type")
         key = _pattern_key(tool_name, error_type)
 
-        state = _load_state(ctx)
+        state = _load_state()
         if not memory.should_report(state, key):
             return
         memory.mark_reported(state, key)
         mood.note_repeat(state, key)
-        _save_state(ctx, state)
+        _save_state(state)
 
-        # Wording outsourced async — never blocks the loop.
-        ctx.spawn_task(
-            _formulate_and_inject(ctx, tool_name, error_type, state["mood"]),
-            name="clippy-inject",
-        )
+        text = _template_wording(tool_name, error_type, mood.tone_for(state))
+        _CTX.inject_message(text)
     except Exception:
-        # Fail-open: Clippy must never disturb the agent loop.
-        pass
+        pass  # fail-open
 
 
-async def _formulate_and_inject(ctx, tool_name: str, error_type: str | None, current_mood: float) -> None:
-    tone = mood.tone_for({"mood": current_mood})
-    prompt = (
-        f"{SYSTEM_PROMPT}\n\n"
-        f"Tone: {tone}.\n"
-        f"The user keeps hitting errors on tool '{tool_name}' "
-        f"(error type: {error_type or 'unknown'}). "
-        f"Give a short, pointed tip in the user's language (max 2 sentences)."
-    )
-    try:
-        result = await ctx.llm.acomplete(
-            [{"role": "system", "content": prompt}],
-            max_tokens=120,
-        )
-        text = (result.text or "").strip()
-        if text:
-            ctx.inject_message(f"📎 {text}")
-    except Exception:
-        # LLM fallback: deterministic message so the user never gets nothing.
-        ctx.inject_message(f"📎 Tool '{tool_name}' is acting up again. Want me to take a look?")
+def _template_wording(tool_name: str, error_type: str | None, tone: str) -> str:
+    """Deterministic message — no LLM in the hook."""
+    if tone == "sarcastic":
+        return (f"📎 Again with '{tool_name}'? ({error_type or 'error'}). "
+                f"Want me to take a look, or should we just stare at it together?")
+    return (f"📎 Looks like '{tool_name}' hit a snag ({error_type or 'error'}). "
+            f"Want a hint on fixing it?")
 
 
-async def _clippy_command(ctx, raw_args: str) -> str | None:
+def _clippy_command(raw_args: str) -> str | None:
     question = raw_args.strip()
     if not question:
         return "What do you want to know? Ask me about Hermes. 📎"
@@ -642,21 +656,24 @@ async def _clippy_command(ctx, raw_args: str) -> str | None:
     if hit:
         return f"📎 {hit.strip()}"
     try:
-        result = await ctx.llm.acomplete([
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": question},
-        ], max_tokens=300)
+        result = _CTX.llm.complete(
+            [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": question},
+            ],
+            max_tokens=300,
+        )
         text = (result.text or "").strip()
         return f"📎 {text}" if text else None
     except Exception:
         return "📎 I'm stumped. Check the Hermes docs: https://hermes-agent.nousresearch.com/docs"
 
 
-def _on_session_start(ctx, **kwargs) -> None:
+def _on_session_start(**kwargs) -> None:
     """Quota reset on new session; dedupe memory survives."""
     try:
-        ctx.state.set("session_quota", 0)
-        ctx.state.set("last_message_at", None)
+        _CTX.state.set("session_quota", 0)
+        _CTX.state.set("last_message_at", None)
     except Exception:
         pass
 ```
@@ -672,7 +689,7 @@ python3 -c "import clippy; print('ok')"
 
 ```bash
 git add __init__.py
-git commit -m "feat: post_tool_call observer hook + async LLM wording"
+git commit -m "feat: post_tool_call observer hook (deterministic, template wording)"
 ```
 
 ---
@@ -683,12 +700,12 @@ git commit -m "feat: post_tool_call observer hook + async LLM wording"
 **Parallel with:** —
 **Blocks:** Task 9
 
-**Objective:** Tests build the real `post_tool_call` payload (not the v1 assumption) and verify deterministic classification end-to-end, including the reporting-semantics rule.
+**Objective:** Tests build the real `post_tool_call` payload (not the v1 assumption) and verify deterministic classification end-to-end, including the reporting-semantics rule — **with `_CTX` set to a fake, since handlers use the module-level `_CTX`, not an injected arg.**
 
 **Files:**
 - Create: `tests/test_hook.py`
 
-**Step 1: Failing test (fixture = real kwargs)**
+**Step 1: Test (fixture = real kwargs)**
 
 ```python
 # tests/test_hook.py
@@ -710,9 +727,9 @@ class FakeLlm:
     def __init__(self):
         self.calls = []
 
-    async def acomplete(self, messages, **kw):
+    def complete(self, messages, **kw):
         self.calls.append(messages)
-        return type("R", (), {"text": "Test tip"})()
+        return type("R", (), {"text": "Test answer"})()
 
 
 class FakeCtx:
@@ -720,10 +737,6 @@ class FakeCtx:
         self.state = FakeState()
         self.llm = FakeLlm()
         self.injected = []
-        self.tasks = []
-
-    def spawn_task(self, coro, name=None):
-        self.tasks.append(coro)
 
     def inject_message(self, content, **kw):
         self.injected.append(content)
@@ -747,43 +760,40 @@ def _post_payload(tool_name, status="error", error_type="exit_code"):
 
 
 def test_new_pattern_reports_immediately():
-    ctx = FakeCtx()
-    clippy_mod._on_post_tool_call(ctx, **_post_payload("terminal"))
-    assert len(ctx.tasks) == 1  # first sighting → spawn wording
+    clippy_mod._CTX = FakeCtx()
+    clippy_mod._on_post_tool_call(**_post_payload("terminal"))
+    assert len(clippy_mod._CTX.injected) == 1  # first sighting → inject
 
 
 def test_repeat_below_threshold_is_suppressed():
-    ctx = FakeCtx()
-    clippy_mod._on_post_tool_call(ctx, **_post_payload("terminal"))  # report 1 (count→1)
-    ctx.tasks.clear()
-    clippy_mod._on_post_tool_call(ctx, **_post_payload("terminal"))  # count 2 (< N=3)
-    assert ctx.tasks == []  # suppressed
+    clippy_mod._CTX = FakeCtx()
+    clippy_mod._on_post_tool_call(**_post_payload("terminal"))  # report 1 (count→1)
+    clippy_mod._on_post_tool_call(**_post_payload("terminal"))  # count 2 (< N=3)
+    assert len(clippy_mod._CTX.injected) == 1  # second suppressed
 
 
 def test_escalation_point_reports_again():
-    ctx = FakeCtx()
-    for _ in range(4):  # reports on call 1 (new) and call 4 (count hits 3)
-        clippy_mod._on_post_tool_call(ctx, **_post_payload("terminal"))
-    assert len(ctx.tasks) == 2  # new + escalation point only
+    clippy_mod._CTX = FakeCtx()
+    for _ in range(4):  # injects on call 1 (new) and call 4 (count hits 3)
+        clippy_mod._on_post_tool_call(**_post_payload("terminal"))
+    assert len(clippy_mod._CTX.injected) == 2  # new + escalation point only
 
 
 def test_ok_status_never_reports():
-    ctx = FakeCtx()
-    clippy_mod._on_post_tool_call(ctx, **_post_payload("terminal", status="ok"))
-    assert ctx.tasks == []
-    assert ctx.state.data.get("session_quota", 0) == 0
+    clippy_mod._CTX = FakeCtx()
+    clippy_mod._on_post_tool_call(**_post_payload("terminal", status="ok"))
+    assert clippy_mod._CTX.injected == []
+    assert clippy_mod._CTX.state.data.get("session_quota", 0) == 0
 ```
 
-**Step 2: Run → FAIL** (`_on_post_tool_call` currently always reports)
-
-**Step 3: Run → PASS** (Task 7 already implements the correct semantics)
+**Step 2: Run → PASS** (Task 7 already implements correct semantics)
 
 ```bash
 pytest tests/ -v
 # Expected: all green (mood, memory, knowledge_lookup, hook)
 ```
 
-**Step 4: Commit**
+**Step 3: Commit**
 
 ```bash
 git add tests/test_hook.py
@@ -801,58 +811,17 @@ git commit -m "test: hook integration with real payload + report semantics"
 **Objective:** README with install/config notes (gateway injection, LLM trust flags).
 
 **Files:**
-- Create: `README.md`
+- Create: `README.md` (already committed as `80af7f1` — verify content matches, do not duplicate)
 
-**Step 1: README**
-
-```markdown
-# Clippy — Hermes Plugin
-
-Clippit (the MS Office paperclip) as a proactive assistant for Hermes.
-Phase 1: the brain (observer + helpdesk). Phase 2 (animated paperclip): later.
-
-## Installation
-
-1. Put the repo at `~/.hermes/plugins/clippy/` (or `git clone` it there).
-2. Restart Hermes. The plugin is auto-discovered.
-
-## Usage
-
-- `/clippy <question>` — helpdesk for Hermes / Hermes Desktop
-- Proactive: on repeated tool errors, Clippy interjects with a tip.
-
-## Config (optional)
-
-```yaml
-# ~/.hermes/config.yaml
-plugins:
-  entries:
-    clippy:
-      allow_gateway_injection: true   # required for proactive messages in the gateway (Telegram/Discord)
-      llm:
-        allowed_models: []            # optionally restrict
-```
-
-## Behavior
-
-- **Mood:** helpful → ironic on repetition.
-- **Memory:** Clippy remembers reported patterns (survives sessions).
-- **Throttle:** max 5 messages/session, min 60s cooldown.
-- **Fail-open:** Clippy can never block the agent loop.
-```
-
-**Step 2: Verify**
+**Step 1: Verify README exists and is correct** (it was committed earlier as part of the EN translation)
 
 ```bash
-wc -l README.md
-# Expected: ~40 lines
+git show HEAD:README.md | head -20
 ```
 
-**Step 3: Commit + Push**
+**Step 2: Final push**
 
 ```bash
-git add README.md
-git commit -m "docs: README with install + config"
 git push -u origin main
 ```
 
@@ -861,13 +830,13 @@ git push -u origin main
 ## Execution Order (Waves)
 
 ```
-Wave 1 (parallel): Task 1
+Wave 1: Task 1
 Wave 2 (parallel): Task 2 ∥ Task 3 ∥ Task 4
-Wave 3 (parallel): Task 5
-Wave 4 (parallel): Task 6
-Wave 5 (parallel): Task 7
-Wave 6 (parallel): Task 8
-Wave 7 (parallel): Task 9
+Wave 3: Task 5
+Wave 4: Task 6
+Wave 5: Task 7
+Wave 6: Task 8
+Wave 7: Task 9
 ```
 
 **Critical path:** Task 1 → (2/3/4) → 5 → 6 → 7 → 8 → 9 (7 waves)
@@ -878,8 +847,9 @@ Wave 7 (parallel): Task 9
 ## Notes for the Implementer
 
 1. **NEVER copy the legacy `skill_factory.py` API** — `@hermes.command()` / `@hermes.on()` no longer exist. Only `ctx.register_command()` / `ctx.register_hook()`.
-2. **Hook callback signature:** `register_hook` invokes the callback with kwargs; always accept `**kwargs` (additive fields stay backward-compatible).
-3. **No LLM in the hook:** `_on_post_tool_call` stays deterministic; `ctx.spawn_task` outsources the async wording.
-4. **`ctx.llm.acomplete`** is the async variant (hooks/commands are async-capable). Trust gates are fail-closed — without `plugins.entries.clippy.llm.*` config only the default path runs (no model override), which is correct for Phase 1.
+2. **Handlers never receive `ctx`.** Hooks are called `callback(**payload)`, commands are called `handler(raw_args)`. Capture `ctx` in the module-level `_CTX` global set inside `register()`.
+3. **No `ctx.spawn_task` and no async in `post_tool_call`.** The hook runs on a daemon worker thread (`_HOOK_TIMEOUT_BOUNDED_HOOKS`) with no event loop — `spawn_task` raises `RuntimeError`. Use template wording + synchronous `ctx.inject_message` (thread-safe queue put). LLM wording in the hook is a deliberate Phase 1 deferral.
+4. **`ctx.llm.complete()` (sync)** is the correct call from the `/clippy` command handler; it returns `PluginLlmCompleteResult` with `.text`. Trust gates are fail-closed — without `plugins.entries.clippy.llm.*` config only the default path runs (no model override), correct for Phase 1.
 5. **`ctx.state`** is `get`/`set` only (no bulk). `_load_state`/`_save_state` encapsulate that.
 6. **Reporting semantics are fixed** (see table at top) — do NOT re-derive them per task; they are already baked into `should_report` and `test_memory.py`/`test_hook.py`.
+7. **Hook callback signature:** `register_hook` invokes the callback with kwargs; always accept `**kwargs` (additive fields stay backward-compatible).
