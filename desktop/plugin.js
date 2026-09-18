@@ -30,6 +30,11 @@ import { jsx, jsxs } from 'react/jsx-runtime'
 import { useEffect, useRef, useState } from 'react'
 import { host } from '@hermes/plugin-sdk'
 
+// The plugin context, captured in register() (the desktop SDK's PluginContext).
+// The pop-out button routes through ctx.os.openOverlay — the curated OS door,
+// never the raw window.hermesDesktop bridge.
+let dashCtx = null
+
 // Children-safe element factory. jsx/jsxs ignore trailing rest args, so every
 // child goes into props.children (cloned props — never mutate the caller's).
 // `key` is extracted from props and passed as jsx/jsxs 3rd arg — the ONLY
@@ -166,6 +171,176 @@ function CloseEditorButton({ onClick }) {
         strokeLinecap: 'round',
       }),
     ),
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Pop-out (⧉) button — opens Dash in the plugin-overlay window: a transparent,
+// always-on-top window floating over ALL apps. Routes through
+// ctx.os.openOverlay (the curated OS door), passing the card's in-window rect
+// as viewport-space bounds — main converts them to screen space so the
+// overlay lands where the card sat (pet overlay parity).
+// ---------------------------------------------------------------------------
+function PopOutButton() {
+  return el(
+    'button',
+    {
+      onClick: e => {
+        const card = e.currentTarget.closest('[data-floating-pane]')
+        const rect = card ? card.getBoundingClientRect() : null
+
+        void (dashCtx?.os?.openOverlay
+          ? dashCtx.os.openOverlay(rect ? { x: rect.x, y: rect.y, width: rect.width, height: rect.height } : null)
+          : Promise.resolve(false))
+      },
+      title: 'Pop out — float over all apps',
+      'aria-label': 'Pop Dash out into a floating window',
+      style: {
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: 24,
+        height: 24,
+        flexShrink: 0,
+        border: '1px solid var(--ui-stroke-secondary)',
+        borderRadius: '6px',
+        background: 'var(--ui-bg-elevated)',
+        color: 'var(--ui-text-secondary)',
+        cursor: 'pointer',
+        padding: 0,
+      },
+    },
+    el(
+      'svg',
+      {
+        viewBox: '0 0 12 12',
+        width: 12,
+        height: 12,
+        fill: 'none',
+        'aria-hidden': 'true',
+      },
+      el('path', {
+        d: 'M4 8 L8 4 M8 4 H5.5 M8 4 V6.5',
+        stroke: 'currentColor',
+        strokeWidth: 1.5,
+        strokeLinecap: 'round',
+        strokeLinejoin: 'round',
+      }),
+      el('path', {
+        d: 'M7 2.5 H3.5 A1 1 0 0 0 2.5 3.5 V8.5 A1 1 0 0 0 3.5 9.5 H8.5 A1 1 0 0 0 9.5 8.5 V5',
+        stroke: 'currentColor',
+        strokeWidth: 1.5,
+        strokeLinecap: 'round',
+      }),
+    ),
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Dash overlay — the contribution rendered inside the plugin-overlay window
+// (`area: 'pluginOverlay'`). A simplified editor: question + answer, no
+// avatar view. The overlay's own header drags the window and its × closes it;
+// this view only does the helpdesk flow.
+// ---------------------------------------------------------------------------
+function DashOverlayPane() {
+  const [question, setQuestion] = useState('')
+  const [answer, setAnswer] = useState('')
+  const [busy, setBusy] = useState(false)
+  const inputRef = useRef(null)
+
+  useEffect(() => {
+    inputRef.current && inputRef.current.focus()
+  }, [])
+
+  const submit = async () => {
+    const q = question.trim()
+    if (!q || busy) return
+    setBusy(true)
+    try {
+      setAnswer(await askDash(q))
+    } catch {
+      setAnswer('✏️ I can\\u2019t reach the gateway right now. Hermes is running, right?')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return el(
+    'div',
+    {
+      style: {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '10px',
+        height: '100%',
+        padding: '10px 12px',
+        overflow: 'auto',
+        color: 'var(--ui-text-primary)',
+      },
+    },
+    el(
+      'div',
+      { style: { display: 'flex', alignItems: 'center', gap: '8px' } },
+      DashFace({ size: 40, thinking: busy }),
+      el('div', { style: { flex: 1, fontSize: '13px', fontWeight: 600 } }, 'Ask Dash'),
+    ),
+    el(
+      'div',
+      { style: { display: 'flex', gap: '8px' } },
+      el('input', {
+        ref: inputRef,
+        value: question,
+        placeholder: 'e.g. gateway won\\u2019t start',
+        onChange: e => setQuestion(e.target.value),
+        onKeyDown: e => {
+          if (e.key === 'Enter') submit()
+        },
+        style: {
+          flex: 1,
+          minWidth: 0,
+          padding: '8px 10px',
+          borderRadius: '6px',
+          border: '1px solid var(--ui-stroke-secondary)',
+          background: 'var(--ui-bg-elevated)',
+          color: 'var(--ui-text-primary)',
+          outline: 'none',
+        },
+      }),
+      el(
+        'button',
+        {
+          onClick: submit,
+          disabled: busy,
+          style: {
+            padding: '8px 14px',
+            borderRadius: '6px',
+            border: 'none',
+            background: busy ? BRAND.thinking : BRAND.yellow,
+            color: busy ? '#ffffff' : '#2b2b31',
+            cursor: busy ? 'wait' : 'pointer',
+            fontWeight: 600,
+          },
+        },
+        busy ? '\\u2026' : 'Ask',
+      ),
+    ),
+    answer
+      ? el(
+          'div',
+          {
+            style: {
+              padding: '12px',
+              borderRadius: '6px',
+              border: '1px solid var(--ui-stroke-secondary)',
+              background: 'var(--ui-bg-elevated)',
+              userSelect: 'text',
+              WebkitUserSelect: 'text',
+              cursor: 'text',
+            },
+          },
+          renderMarkdown(answer),
+        )
+      : null,
   )
 }
 
@@ -319,6 +494,7 @@ function DashPane() {
         DashFace({ size: 40, thinking: busy }),
       ),
       el('div', { style: { flex: 1, fontSize: '13px', fontWeight: 600 } }, 'Ask Dash'),
+      el(PopOutButton, {}),
       el(CloseEditorButton, { onClick: () => setView('avatar') }),
     ),
     el(
@@ -391,6 +567,7 @@ export default {
   name: 'Dash',
   description: 'The pencil helper for Hermes — a floating window that answers questions about commands, errors, and the Desktop app.',
   register(ctx) {
+    dashCtx = ctx
     ctx.register({
       id: 'pane-float',
       area: 'panes',
@@ -402,6 +579,15 @@ export default {
         height: '360px',
       },
       render: () => el(DashPane, {}),
+    })
+    // The pop-out contribution: rendered by the plugin-overlay window
+    // (`?win=plugoverlay&plugin=dash`). The same helpdesk flow, own header —
+    // the core overlay shell drags/resizes/closes the OS window.
+    ctx.register({
+      id: 'overlay',
+      area: 'pluginOverlay',
+      title: 'Dash',
+      render: () => el(DashOverlayPane, {}),
     })
   },
 }
