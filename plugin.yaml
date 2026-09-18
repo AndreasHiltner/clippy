@@ -1,0 +1,7 @@
+name: clippy
+version: 0.1.0
+description: "Clippy — the proactive assistant: detects repeated tool errors and helps with Hermes questions. Mood system, memory, throttle."
+author: andreas
+kind: standalone
+requires_hermes: ">=0.19"
+platforms: []
