@@ -3,6 +3,13 @@
 Clippit (the MS Office paperclip) as a proactive assistant for Hermes.
 Phase 1: the brain (observer + helpdesk). Phase 2 (animated paperclip): later.
 
+![Clippy](assets/clippy.png)
+
+## Assets
+
+- `assets/clippy.svg` — source vector (edit this, then re-render PNGs)
+- `assets/clippy.png` / `clippy-512.png` / `clippy-64.png` — rendered PNGs
+
 ## Installation
 
 1. Put the repo at `~/.hermes/plugins/clippy/` (or `git clone` it there).

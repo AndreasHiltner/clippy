@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-label="Clippy the paperclip">
+  <!-- Paperclip body: classic double-loop paperclip wire -->
+  <path d="M 78 34
+           C 78 20, 92 14, 106 14
+           C 126 14, 140 26, 140 44
+           L 140 196
+           C 140 218, 156 234, 178 234
+           C 200 234, 214 220, 214 202
+           L 214 78
+           C 214 62, 202 52, 188 52
+           C 174 52, 162 62, 162 76
+           L 162 178
+           C 162 190, 168 198, 178 198"
+        fill="none" stroke="#8a8a96" stroke-width="24" stroke-linecap="round"/>
+  <path d="M 78 34
+           C 78 20, 92 14, 106 14
+           C 126 14, 140 26, 140 44
+           L 140 196
+           C 140 218, 156 234, 178 234
+           C 200 234, 214 220, 214 202
+           L 214 78
+           C 214 62, 202 52, 188 52
+           C 174 52, 162 62, 162 76
+           L 162 178
+           C 162 190, 168 198, 178 198"
+        fill="none" stroke="#c8c8d0" stroke-width="16" stroke-linecap="round"/>
+
+  <!-- Eyes -->
+  <g>
+    <ellipse cx="112" cy="60" rx="12" ry="16" fill="#ffffff"/>
+    <ellipse cx="158" cy="60" rx="12" ry="16" fill="#ffffff"/>
+    <circle cx="115" cy="62" r="5.5" fill="#20202a"/>
+    <circle cx="161" cy="62" r="5.5" fill="#20202a"/>
+    <circle cx="117.5" cy="59" r="2" fill="#ffffff"/>
+    <circle cx="163.5" cy="59" r="2" fill="#ffffff"/>
+    <path d="M 100 40 Q 112 34 124 40" fill="none" stroke="#4a4a54" stroke-width="4" stroke-linecap="round"/>
+    <path d="M 146 40 Q 158 34 170 40" fill="none" stroke="#4a4a54" stroke-width="4" stroke-linecap="round"/>
+  </g>
+</svg>
