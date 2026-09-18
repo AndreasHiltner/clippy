@@ -86,7 +86,11 @@ def _dash_command(raw_args: str) -> str | None:
         return "What do you want to know? Ask me about Hermes. ✏️"
     hit = knowledge_lookup.search(question)
     if hit:
-        return f"✏️ {hit.strip()}"
+        answer = hit.strip()
+        # Header-only hit (e.g. '## Error Patterns' with no body match) is not
+        # an answer — fall through to the LLM.
+        if "\n" in answer:
+            return f"✏️ {answer}"
     try:
         result = _CTX.llm.complete(
             [

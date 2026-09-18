@@ -32,19 +32,41 @@ import { host } from '@hermes/plugin-sdk'
 
 // Children-safe element factory. jsx/jsxs ignore trailing rest args, so every
 // child goes into props.children (cloned props — never mutate the caller's).
+// `key` is extracted from props and passed as jsx/jsxs 3rd arg — the ONLY
+// slot those functions read it from (a spread key triggers a React warning).
 function el(tag, props, ...children) {
-  if (children.length === 0) return jsx(tag, props)
-  if (children.length === 1) return jsx(tag, Object.assign({}, props, { children: children[0] }))
-  return jsxs(tag, Object.assign({}, props, { children }))
+  const { key, ...rest } = props || {}
+  if (children.length === 0) return jsx(tag, rest, key)
+  if (children.length === 1) return jsx(tag, Object.assign({}, rest, { children: children[0] }), key)
+  return jsxs(tag, Object.assign({}, rest, { children }), key)
+}
+
+// ---------------------------------------------------------------------------
+// Dash brand colors — HARD-CODED, not theme vars.
+//
+// `var(--ui-accent)` is the desktop ACCENT (blue here) — the pencil body must
+// be Dash yellow regardless of theme. Only chrome (text, borders, buttons)
+// stays themed. While busy (thinking), the body turns blue.
+// ---------------------------------------------------------------------------
+const BRAND = {
+  yellow: '#f6c945',
+  yellowShade: '#e0b03a',
+  pink: '#e5484d',
+  ferruleDark: '#8a8f98',
+  ferruleLight: '#c9ced6',
+  wood: '#e8c39e',
+  graphite: '#4a4a52',
+  face: '#2b2b31',
+  thinking: '#4d8df5',
 }
 
 // ---------------------------------------------------------------------------
 // Dash pencil — original character, inline SVG twin of assets/dash.svg.
-// Themed via CSS vars: yellow body = accent, pink eraser = red token, graphite
-// + face lines = text color. Flat stylized pencil, NOT any existing assistant
-// mascot.
+// Flat stylized pencil, NOT any existing assistant mascot.
 // ---------------------------------------------------------------------------
-function DashFace({ size = 96 }) {
+function DashFace({ size = 96, thinking = false }) {
+  const body = thinking ? BRAND.thinking : BRAND.yellow
+  const shade = thinking ? BRAND.thinking : BRAND.yellowShade
   return el(
     'svg',
     {
@@ -58,53 +80,34 @@ function DashFace({ size = 96 }) {
     // eraser
     el('path', {
       d: 'M 96 26 h 64 a 10 10 0 0 1 10 10 v 26 h -84 v -26 a 10 10 0 0 1 10 -10 Z',
-      fill: 'var(--ui-red, #e5484d)',
+      fill: BRAND.pink,
     }),
     // ferrule
-    el('path', {
-      d: 'M 96 56 h 64 v 8 h -64 Z',
-      fill: 'var(--ui-text-quaternary, #8a8f98)',
-    }),
-    el('path', {
-      d: 'M 96 72 h 64 v 18 h -64 Z',
-      fill: 'var(--ui-text-secondary)',
-    }),
+    el('path', { d: 'M 96 56 h 64 v 8 h -64 Z', fill: BRAND.ferruleDark }),
+    el('path', { d: 'M 96 72 h 64 v 18 h -64 Z', fill: BRAND.ferruleLight }),
     // body
-    el('path', {
-      d: 'M 96 90 h 64 v 110 h -64 Z',
-      fill: 'var(--ui-accent)',
-    }),
+    el('path', { d: 'M 96 90 h 64 v 110 h -64 Z', fill: body }),
     // body shading stripe
-    el('path', {
-      d: 'M 96 90 h 8 v 110 h -8 Z',
-      fill: 'var(--ui-accent)',
-      opacity: 0.55,
-    }),
+    el('path', { d: 'M 96 90 h 8 v 110 h -8 Z', fill: shade, opacity: 0.55 }),
     // wood cone
-    el('path', {
-      d: 'M 96 200 h 64 l -14 32 h -36 Z',
-      fill: '#e8c39e',
-    }),
+    el('path', { d: 'M 96 200 h 64 l -14 32 h -36 Z', fill: BRAND.wood }),
     // graphite tip
-    el('path', {
-      d: 'M 118 232 h 20 l -4 20 h -12 Z',
-      fill: 'var(--ui-text-primary)',
-    }),
+    el('path', { d: 'M 118 232 h 20 l -4 20 h -12 Z', fill: BRAND.graphite }),
     // eyes
-    el('circle', { cx: 112, cy: 122, r: 6, fill: 'var(--ui-text-primary)' }),
-    el('circle', { cx: 144, cy: 122, r: 6, fill: 'var(--ui-text-primary)' }),
+    el('circle', { cx: 112, cy: 122, r: 6, fill: BRAND.face }),
+    el('circle', { cx: 144, cy: 122, r: 6, fill: BRAND.face }),
     // eyebrows
     el('path', {
       d: 'M 103 106 Q 112 100 121 106',
       fill: 'none',
-      stroke: 'var(--ui-text-primary)',
+      stroke: BRAND.face,
       strokeWidth: 4,
       strokeLinecap: 'round',
     }),
     el('path', {
       d: 'M 135 106 Q 144 100 153 106',
       fill: 'none',
-      stroke: 'var(--ui-text-primary)',
+      stroke: BRAND.face,
       strokeWidth: 4,
       strokeLinecap: 'round',
     }),
@@ -112,11 +115,59 @@ function DashFace({ size = 96 }) {
     el('path', {
       d: 'M 118 148 Q 128 156 138 148',
       fill: 'none',
-      stroke: 'var(--ui-text-primary)',
+      stroke: BRAND.face,
       strokeWidth: 4,
       strokeLinecap: 'round',
     }),
   )
+}
+
+// ---------------------------------------------------------------------------
+// Mini Markdown renderer for KB answers.
+//
+// The Python brain returns knowledge-base sections as raw Markdown
+// ('## General\n- a\n- b'). `whiteSpace: 'pre-wrap'` renders that as an ugly
+// mono block — instead, turn `## ` headings and `- ` bullets into real DOM.
+// Unknown line types fall through as plain paragraphs. This is presentation
+// sugar only; no HTML is ever rendered from answer text.
+// ---------------------------------------------------------------------------
+const MD_BASE = { fontSize: '13px', lineHeight: 1.5, margin: 0 }
+
+function renderMarkdown(text) {
+  const blocks = []
+  const lines = String(text || '').split('\n')
+  for (const raw of lines) {
+    const line = raw.trimEnd()
+    if (!line.trim()) continue
+    const heading = /^##\s+(.*)$/.exec(line)
+    if (heading) {
+      blocks.push(
+        el(
+          'div',
+          { key: blocks.length, style: { ...MD_BASE, fontWeight: 700, marginTop: blocks.length ? '8px' : '0' } },
+          heading[1],
+        ),
+      )
+      continue
+    }
+    const bullet = /^-\s+(.*)$/.exec(line)
+    if (bullet) {
+      blocks.push(
+        el(
+          'div',
+          {
+            key: blocks.length,
+            style: { ...MD_BASE, display: 'flex', gap: '6px', marginTop: '4px' },
+          },
+          el('span', { style: { flexShrink: 0, color: 'var(--ui-text-quaternary, #8a8f98)' } }, '•'),
+          el('span', { style: { flex: 1, minWidth: 0 } }, bullet[1]),
+        ),
+      )
+      continue
+    }
+    blocks.push(el('div', { key: blocks.length, style: { ...MD_BASE, marginTop: '4px' } }, line))
+  }
+  return el('div', null, ...blocks)
 }
 
 // ---------------------------------------------------------------------------
@@ -185,7 +236,7 @@ function DashPane() {
         onClick: () => setView('editor'),
         title: 'Click to ask Dash',
       },
-      DashFace({ size: 120 }),
+      DashFace({ size: 120, thinking: busy }),
       el(
         'div',
         { style: { textAlign: 'center', fontSize: '13px', color: 'var(--ui-text-secondary)' } },
@@ -201,7 +252,7 @@ function DashPane() {
     el(
       'div',
       { style: { display: 'flex', alignItems: 'center', gap: '8px' } },
-      DashFace({ size: 40 }),
+      DashFace({ size: 40, thinking: busy }),
       el('div', { style: { flex: 1, fontSize: '13px', fontWeight: 600 } }, 'Ask Dash'),
       el(
         'button',
@@ -251,8 +302,8 @@ function DashPane() {
             padding: '8px 14px',
             borderRadius: '6px',
             border: 'none',
-            background: 'var(--ui-accent)',
-            color: 'var(--ui-bg)',
+            background: busy ? BRAND.thinking : BRAND.yellow,
+            color: busy ? '#ffffff' : '#2b2b31',
             cursor: busy ? 'wait' : 'pointer',
             fontWeight: 600,
           },
@@ -269,11 +320,9 @@ function DashPane() {
               borderRadius: '6px',
               border: '1px solid var(--ui-stroke-secondary)',
               background: 'var(--ui-bg-elevated)',
-              whiteSpace: 'pre-wrap',
-              fontSize: '13px',
             },
           },
-          answer,
+          renderMarkdown(answer),
         )
       : null,
   )
