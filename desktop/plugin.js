@@ -123,6 +123,53 @@ function DashFace({ size = 96, thinking = false }) {
 }
 
 // ---------------------------------------------------------------------------
+// Close (×) button — returns the card from the editor view to the avatar.
+// The original bare '‹' glyph was invisible as a control; this is a bordered,
+// labeled button with a real 24px hit target. The Dash face in the editor
+// header is a second, discoverable way back (click it).
+// ---------------------------------------------------------------------------
+function CloseEditorButton({ onClick }) {
+  return el(
+    'button',
+    {
+      onClick,
+      title: 'Back to Dash',
+      'aria-label': 'Close editor, back to Dash',
+      style: {
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: 24,
+        height: 24,
+        flexShrink: 0,
+        border: '1px solid var(--ui-stroke-secondary)',
+        borderRadius: '6px',
+        background: 'var(--ui-bg-elevated)',
+        color: 'var(--ui-text-secondary)',
+        cursor: 'pointer',
+        padding: 0,
+      },
+    },
+    el(
+      'svg',
+      {
+        viewBox: '0 0 12 12',
+        width: 12,
+        height: 12,
+        fill: 'none',
+        'aria-hidden': 'true',
+      },
+      el('path', {
+        d: 'M2.5 2.5 L9.5 9.5 M9.5 2.5 L2.5 9.5',
+        stroke: 'currentColor',
+        strokeWidth: 1.6,
+        strokeLinecap: 'round',
+      }),
+    ),
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Mini Markdown renderer for KB answers.
 //
 // The Python brain returns knowledge-base sections as raw Markdown
@@ -262,24 +309,17 @@ function DashPane() {
     el(
       'div',
       { style: { display: 'flex', alignItems: 'center', gap: '8px' } },
-      DashFace({ size: 40, thinking: busy }),
-      el('div', { style: { flex: 1, fontSize: '13px', fontWeight: 600 } }, 'Ask Dash'),
       el(
-        'button',
+        'div',
         {
           onClick: () => setView('avatar'),
           title: 'Back to Dash',
-          style: {
-            border: 'none',
-            background: 'transparent',
-            color: 'var(--ui-text-secondary)',
-            fontSize: '16px',
-            cursor: 'pointer',
-            padding: '0 4px',
-          },
+          style: { cursor: 'pointer', display: 'flex', alignItems: 'center', flexShrink: 0 },
         },
-        '\u2039',
+        DashFace({ size: 40, thinking: busy }),
       ),
+      el('div', { style: { flex: 1, fontSize: '13px', fontWeight: 600 } }, 'Ask Dash'),
+      el(CloseEditorButton, { onClick: () => setView('avatar') }),
     ),
     el(
       'div',
