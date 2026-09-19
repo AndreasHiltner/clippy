@@ -4,18 +4,17 @@
 //   agent half   ~/.hermes/plugins/dash/__init__.py  (registers /dash + observer hooks)
 //   desktop half ~/.hermes/plugins/dash/desktop/plugin.js  (this file)
 //
-// The pane is a FLOATING helpdesk card. The core pane shell renders
-// `placement: 'floating'` as a fixed, draggable window — the header is the
-// drag handle, the corner is a resize grip, and position + size are persisted
-// per pane id. No drag code lives here.
-//
-// Two views inside the card:
-//   avatar — the Dash pencil; a single click opens the editor
-//   editor — question input + answer, sent to the ALREADY-running Python
-//            brain via gateway RPC (command.dispatch → plugin command 'dash')
+// Dash lives ONLY as a floating overlay window — no in-window pane. The
+// overlay has two postures in one window:
+//   mascot — the pencil sprite (96×96, transparent, bound to the Hermes
+//            window). Auto-appears at every desktop start. A single click
+//            expands the SAME window into the card.
+//   card   — the Q&A editor (opaque). Question + answer, sent to the
+//            ALREADY-running Python brain via gateway RPC (command.dispatch →
+//            plugin command 'dash').
 //
 // Session-independent: the Python brain answers the question directly and the
-// answer renders inside this card. No chat session is created, no tab opens —
+// answer renders inside the card. No chat session is created, no tab opens —
 // command.dispatch routes plugin commands without a session.
 //
 // Plain ESM, loaded uncompiled: jsx()/jsxs() calls only, imports limited to
@@ -164,118 +163,6 @@ function spriteShapeRects() {
     width: Math.max(1, Math.round(r.w * scale)),
     height: Math.max(1, Math.round(r.h * scale)),
   }))
-}
-
-// ---------------------------------------------------------------------------
-// Close (×) button — returns the card from the editor view to the avatar.
-// The original bare '‹' glyph was invisible as a control; this is a bordered,
-// labeled button with a real 24px hit target. The Dash face in the editor
-// header is a second, discoverable way back (click it).
-// ---------------------------------------------------------------------------
-function CloseEditorButton({ onClick }) {
-  return el(
-    'button',
-    {
-      onClick,
-      title: 'Back to Dash',
-      'aria-label': 'Close editor, back to Dash',
-      style: {
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        width: 24,
-        height: 24,
-        flexShrink: 0,
-        border: '1px solid var(--ui-stroke-secondary)',
-        borderRadius: '6px',
-        background: 'var(--ui-bg-elevated)',
-        color: 'var(--ui-text-secondary)',
-        cursor: 'pointer',
-        padding: 0,
-      },
-    },
-    el(
-      'svg',
-      {
-        viewBox: '0 0 12 12',
-        width: 12,
-        height: 12,
-        fill: 'none',
-        'aria-hidden': 'true',
-      },
-      el('path', {
-        d: 'M2.5 2.5 L9.5 9.5 M9.5 2.5 L2.5 9.5',
-        stroke: 'currentColor',
-        strokeWidth: 1.6,
-        strokeLinecap: 'round',
-      }),
-    ),
-  )
-}
-
-// ---------------------------------------------------------------------------
-// Pop-out (⧉) button — opens Dash in the plugin-overlay window: a transparent,
-// always-on-top window floating over ALL apps. Routes through
-// ctx.os.openOverlay (the curated OS door), passing the card's in-window rect
-// as viewport-space bounds — main converts them to screen space so the
-// overlay lands where the card sat (pet overlay parity).
-// ---------------------------------------------------------------------------
-function PopOutButton() {
-  return el(
-    'button',
-    {
-      onClick: e => {
-        const card = e.currentTarget.closest('[data-floating-pane]')
-        const rect = card ? card.getBoundingClientRect() : null
-
-        void (dashCtx?.os?.openOverlay
-          ? dashCtx.os.openOverlay({
-              mode: 'card',
-              bounds: rect ? { x: rect.x, y: rect.y, width: rect.width, height: rect.height } : null,
-            })
-          : Promise.resolve(false))
-      },
-      title: 'Pop out — float over all apps',
-      'aria-label': 'Pop Dash out into a floating window',
-      style: {
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        width: 24,
-        height: 24,
-        flexShrink: 0,
-        border: '1px solid var(--ui-stroke-secondary)',
-        borderRadius: '6px',
-        background: 'var(--ui-bg-elevated)',
-        color: 'var(--ui-text-secondary)',
-        cursor: 'pointer',
-        padding: 0,
-      },
-    },
-    el(
-      'svg',
-      {
-        viewBox: '0 0 12 12',
-        width: 12,
-        height: 12,
-        fill: 'none',
-        'aria-hidden': 'true',
-      },
-      el('path', {
-        d: 'M4 8 L8 4 M8 4 H5.5 M8 4 V6.5',
-        stroke: 'currentColor',
-        strokeWidth: 1.5,
-        strokeLinecap: 'round',
-        strokeLinejoin: 'round',
-      }),
-      el('path', {
-        d: 'M7 2.5 H3.5 A1 1 0 0 0 2.5 3.5 V8.5 A1 1 0 0 0 3.5 9.5 H8.5 A1 1 0 0 0 9.5 8.5 V5',
-        stroke: 'currentColor',
-        strokeWidth: 1.5,
-        strokeLinecap: 'round',
-      }),
-    ),
-  )
 }
 
 // ---------------------------------------------------------------------------
@@ -539,171 +426,16 @@ async function askDash(question) {
   return '✏️ Hmm. No answer came back — is the Hermes gateway running?'
 }
 
-function DashPane() {
-  const [view, setView] = useState('avatar')
-  const [question, setQuestion] = useState('')
-  const [answer, setAnswer] = useState('')
-  const [busy, setBusy] = useState(false)
-  const inputRef = useRef(null)
-
-  useEffect(() => {
-    if (view === 'editor') {
-      inputRef.current && inputRef.current.focus()
-    }
-  }, [view])
-
-  const submit = async () => {
-    const q = question.trim()
-    if (!q || busy) return
-    setBusy(true)
-    try {
-      setAnswer(await askDash(q))
-    } catch {
-      setAnswer('✏️ I can\u2019t reach the gateway right now. Hermes is running, right?')
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const base = {
-    display: 'flex',
-    flexDirection: 'column',
-    height: '100%',
-    color: 'var(--ui-text-primary)',
-  }
-
-  // Avatar view — the whole card is the Dash pencil. One click opens the editor.
-  if (view === 'avatar') {
-    return el(
-      'div',
-      {
-        style: {
-          ...base,
-          alignItems: 'center',
-          justifyContent: 'center',
-          gap: '10px',
-          padding: '16px',
-          cursor: 'pointer',
-        },
-        onClick: () => setView('editor'),
-        title: 'Click to ask Dash',
-      },
-      DashFace({ size: 120, thinking: busy }),
-      el(
-        'div',
-        { style: { textAlign: 'center', fontSize: '13px', color: 'var(--ui-text-secondary)' } },
-        'Need a hand? Click me to ask!',
-      ),
-    )
-  }
-
-  // Editor view — question + answer, still inside the floating card.
-  return el(
-    'div',
-    { style: { ...base, gap: '10px', padding: '10px 12px', overflow: 'auto' } },
-    el(
-      'div',
-      { style: { display: 'flex', alignItems: 'center', gap: '8px' } },
-      el(
-        'div',
-        {
-          onClick: () => setView('avatar'),
-          title: 'Back to Dash',
-          style: { cursor: 'pointer', display: 'flex', alignItems: 'center', flexShrink: 0 },
-        },
-        DashFace({ size: 40, thinking: busy }),
-      ),
-      el('div', { style: { flex: 1, fontSize: '13px', fontWeight: 600 } }, 'Ask Dash'),
-      el(PopOutButton, {}),
-      el(CloseEditorButton, { onClick: () => setView('avatar') }),
-    ),
-    el(
-      'div',
-      { style: { display: 'flex', gap: '8px' } },
-      el('input', {
-        ref: inputRef,
-        value: question,
-        placeholder: 'e.g. gateway won\u2019t start',
-        onChange: e => setQuestion(e.target.value),
-        onKeyDown: e => {
-          if (e.key === 'Enter') submit()
-        },
-        style: {
-          flex: 1,
-          minWidth: 0,
-          padding: '8px 10px',
-          borderRadius: '6px',
-          border: '1px solid var(--ui-stroke-secondary)',
-          background: 'var(--ui-bg-elevated)',
-          color: 'var(--ui-text-primary)',
-          outline: 'none',
-        },
-      }),
-      el(
-        'button',
-        {
-          onClick: submit,
-          disabled: busy,
-          style: {
-            padding: '8px 14px',
-            borderRadius: '6px',
-            border: 'none',
-            background: busy ? BRAND.thinking : BRAND.yellow,
-            color: busy ? '#ffffff' : '#2b2b31',
-            cursor: busy ? 'wait' : 'pointer',
-            fontWeight: 600,
-          },
-        },
-        busy ? '\u2026' : 'Ask',
-      ),
-    ),
-    answer
-      ? el(
-          'div',
-          {
-            // The pane shell's floating drag skips any element carrying
-            // data-floating-no-drag — without it, dragging to select text
-            // would move the whole card instead. Text stays selectable and
-            // copyable here; the header remains the drag handle.
-            'data-floating-no-drag': '',
-            style: {
-              padding: '12px',
-              borderRadius: '6px',
-              border: '1px solid var(--ui-stroke-secondary)',
-              background: 'var(--ui-bg-elevated)',
-              userSelect: 'text',
-              WebkitUserSelect: 'text',
-              cursor: 'text',
-            },
-          },
-          renderMarkdown(answer),
-        )
-      : null,
-  )
-}
-
 export default {
   id: 'dash',
   name: 'Dash',
   description: 'The pencil helper for Hermes — a floating window that answers questions about commands, errors, and the Desktop app.',
   register(ctx) {
     dashCtx = ctx
-    ctx.register({
-      id: 'pane-float',
-      area: 'panes',
-      title: 'Dash',
-      data: {
-        placement: 'floating',
-        anchor: 'bottom-right',
-        width: '300px',
-        height: '360px',
-      },
-      render: () => el(DashPane, {}),
-    })
-    // The pop-out contribution: rendered by the plugin-overlay window
-    // (`?win=plugoverlay&plugin=dash`) in BOTH postures — the pencil sprite
-    // (mascot) and the Q&A editor (card). The overlay host flips the posture
-    // and pushes it to this component.
+    // Dash has NO in-window pane. Its only surface is the plugin-overlay
+    // contribution (`?win=plugoverlay&plugin=dash`), rendered in BOTH
+    // postures — the pencil sprite (mascot) and the Q&A editor (card). The
+    // overlay host flips the posture and pushes it to this component.
     ctx.register({
       id: 'overlay',
       area: 'pluginOverlay',
