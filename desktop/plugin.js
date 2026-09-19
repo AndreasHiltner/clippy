@@ -128,6 +128,45 @@ function DashFace({ size = 96, thinking = false }) {
 }
 
 // ---------------------------------------------------------------------------
+// Mascot silhouette — the pencil's opaque regions as axis-aligned rects in
+// viewBox units. On compositor-less systems the overlay window renders
+// BLACK until its X11 shape is carved: the mascot contribution reports
+// these rects and main clips the window to them, so only the pencil is
+// visible and the desktop shows through everywhere else. The card posture
+// reports [] — the card paints its own full opaque surface.
+//
+// All rects stay INSIDE the true silhouette: an over-wide carve would show
+// unpainted (black) pixels, so the tapered cone is stepped instead of
+// using one bounding rect.
+// ---------------------------------------------------------------------------
+const MASCOT_SPRITE_SIZE = 88
+const MASCOT_WINDOW_SIZE = 96
+
+const PENCIL_SHAPE_RECTS = [
+  { x: 86, y: 26, w: 84, h: 38 }, // eraser + dark ferrule band
+  { x: 96, y: 72, w: 64, h: 18 }, // light ferrule band
+  { x: 96, y: 90, w: 64, h: 110 }, // body
+  { x: 96, y: 200, w: 64, h: 8 }, // wood cone, tapering in 4 steps
+  { x: 101, y: 208, w: 54, h: 8 },
+  { x: 106, y: 216, w: 44, h: 8 },
+  { x: 110, y: 224, w: 36, h: 8 },
+  { x: 118, y: 232, w: 20, h: 8 }, // graphite tip, tapering
+  { x: 122, y: 240, w: 12, h: 12 },
+]
+
+function spriteShapeRects() {
+  const scale = MASCOT_SPRITE_SIZE / 256
+  const inset = Math.round((MASCOT_WINDOW_SIZE - MASCOT_SPRITE_SIZE) / 2)
+
+  return PENCIL_SHAPE_RECTS.map(r => ({
+    x: inset + Math.round(r.x * scale),
+    y: inset + Math.round(r.y * scale),
+    width: Math.max(1, Math.round(r.w * scale)),
+    height: Math.max(1, Math.round(r.h * scale)),
+  }))
+}
+
+// ---------------------------------------------------------------------------
 // Close (×) button — returns the card from the editor view to the avatar.
 // The original bare '‹' glyph was invisible as a control; this is a bordered,
 // labeled button with a real 24px hit target. The Dash face in the editor
@@ -190,7 +229,10 @@ function PopOutButton() {
         const rect = card ? card.getBoundingClientRect() : null
 
         void (dashCtx?.os?.openOverlay
-          ? dashCtx.os.openOverlay(rect ? { x: rect.x, y: rect.y, width: rect.width, height: rect.height } : null)
+          ? dashCtx.os.openOverlay({
+              mode: 'card',
+              bounds: rect ? { x: rect.x, y: rect.y, width: rect.width, height: rect.height } : null,
+            })
           : Promise.resolve(false))
       },
       title: 'Pop out — float over all apps',
@@ -237,10 +279,18 @@ function PopOutButton() {
 }
 
 // ---------------------------------------------------------------------------
-// Dash overlay — the contribution rendered inside the plugin-overlay window
-// (`area: 'pluginOverlay'`). A simplified editor: question + answer, no
-// avatar view. The overlay's own header drags the window and its × closes it;
-// this view only does the helpdesk flow.
+// Dash overlay contribution (`area: 'pluginOverlay'`) — ONE component that
+// renders BOTH postures of the overlay window:
+//
+//   mascot — the pencil sprite. The window is 96×96, transparent, and bound
+//            to the Hermes app window (drag-clamped, hides with the app).
+//            A single click asks the overlay host to expand to the card.
+//   card   — the Q&A editor. The host paints the opaque card surface; this
+//            view renders question + answer. Its own close buttons live in
+//            the host's header (✕ closes, – shrinks back to the pencil).
+//
+// The host drives the posture: main owns the OS geometry, and the overlay
+// renderer passes the mode down through the contribution (ctx.os / bridge).
 // ---------------------------------------------------------------------------
 function DashOverlayPane() {
   const [question, setQuestion] = useState('')
@@ -248,9 +298,58 @@ function DashOverlayPane() {
   const [busy, setBusy] = useState(false)
   const inputRef = useRef(null)
 
+  // The overlay's posture, from the host. The window size is a reliable
+  // INSTANT first guess (the mascot is always exactly 96×96; the card never
+  // below 120×80 — main enforces both), so the first paint never flashes the
+  // wrong view. `whoami` then confirms, and `onMode` follows every flip.
+  const [mode, setMode] = useState(() =>
+    typeof window !== 'undefined' && window.outerWidth <= 100 && window.outerHeight <= 100 ? 'mascot' : 'card'
+  )
+
   useEffect(() => {
-    inputRef.current && inputRef.current.focus()
+    let cancelled = false
+    const bridge = window.hermesDesktop?.pluginOverlay
+
+    if (bridge?.whoami) {
+      void bridge
+        .whoami()
+        .then(who => {
+          if (!cancelled && who?.pluginId === 'dash') {
+            setMode(who.mode === 'mascot' ? 'mascot' : 'card')
+          }
+        })
+        .catch(() => undefined)
+    }
+
+    const off = bridge?.onMode?.(m => {
+      if (!cancelled) {
+        setMode(m === 'mascot' ? 'mascot' : 'card')
+      }
+    })
+
+    return () => {
+      cancelled = true
+      off?.()
+    }
   }, [])
+
+  // Every posture change reports the shape that belongs to it: the mascot
+  // carves the pencil silhouette, the card clears it (its own surface is
+  // fully painted). The initial mount also reports — the shape-gated reveal
+  // on compositor-less systems waits for this exact message.
+  useEffect(() => {
+    try {
+      window.hermesDesktop?.pluginOverlay?.setShape?.(mode === 'mascot' ? spriteShapeRects() : [])
+    } catch {
+      // Older hosts without setShape — the window stays a full rect.
+    }
+  }, [mode])
+
+  useEffect(() => {
+    if (mode === 'card') {
+      inputRef.current && inputRef.current.focus()
+    }
+  }, [mode])
 
   const submit = async () => {
     const q = question.trim()
@@ -259,12 +358,33 @@ function DashOverlayPane() {
     try {
       setAnswer(await askDash(q))
     } catch {
-      setAnswer('✏️ I can\\u2019t reach the gateway right now. Hermes is running, right?')
+      setAnswer('✏️ I can\u2019t reach the gateway right now. Hermes is running, right?')
     } finally {
       setBusy(false)
     }
   }
 
+  // ── Mascot posture: just the pencil, centered in the 96×96 window. The
+  // overlay host handles the click-to-expand; this view only paints.
+  if (mode === 'mascot') {
+    return el(
+      'div',
+      {
+        style: {
+          alignItems: 'center',
+          background: 'transparent',
+          display: 'flex',
+          height: '100%',
+          justifyContent: 'center',
+          pointerEvents: 'none', // the host's own surface handles clicks
+          width: '100%',
+        },
+      },
+      DashFace({ size: 88, thinking: busy }),
+    )
+  }
+
+  // ── Card posture: question + answer.
   return el(
     'div',
     {
@@ -290,7 +410,7 @@ function DashOverlayPane() {
       el('input', {
         ref: inputRef,
         value: question,
-        placeholder: 'e.g. gateway won\\u2019t start',
+        placeholder: 'e.g. gateway won\u2019t start',
         onChange: e => setQuestion(e.target.value),
         onKeyDown: e => {
           if (e.key === 'Enter') submit()
@@ -321,7 +441,7 @@ function DashOverlayPane() {
             fontWeight: 600,
           },
         },
-        busy ? '\\u2026' : 'Ask',
+        busy ? '\u2026' : 'Ask',
       ),
     ),
     answer
@@ -581,13 +701,21 @@ export default {
       render: () => el(DashPane, {}),
     })
     // The pop-out contribution: rendered by the plugin-overlay window
-    // (`?win=plugoverlay&plugin=dash`). The same helpdesk flow, own header —
-    // the core overlay shell drags/resizes/closes the OS window.
+    // (`?win=plugoverlay&plugin=dash`) in BOTH postures — the pencil sprite
+    // (mascot) and the Q&A editor (card). The overlay host flips the posture
+    // and pushes it to this component.
     ctx.register({
       id: 'overlay',
       area: 'pluginOverlay',
       title: 'Dash',
       render: () => el(DashOverlayPane, {}),
     })
+
+    // Auto-start: the pencil floats on the Hermes desktop from app launch
+    // (the Petdex behavior). Mascot mode — small, transparent, bound to the
+    // app window. Fails silently on builds without the overlay host.
+    if (dashCtx?.os?.openOverlay) {
+      void dashCtx.os.openOverlay({ mode: 'mascot' }).catch(() => undefined)
+    }
   },
 }
